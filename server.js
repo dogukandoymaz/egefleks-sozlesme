@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import { MongoClient } from 'mongodb';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(__dirname, 'db.json');
+const MONGODB_URI = process.env.MONGODB_URI;
 
 // In-memory active session tokens
 const activeSessions = new Set();
@@ -87,7 +89,70 @@ const DEFAULT_PARQUET_CATALOG = [
   { brand: 'TERRA CLICK', series: '', class: '31-AC3', beveled: 'DERZSİZ', mm: 8, packageM2: 2.3071, packagePrice: 1000 }
 ];
 
-const readDb = () => {
+// MongoDB Database Client and State
+let mongoClient = null;
+let mongoDb = null;
+let isMongoConnected = false;
+
+// Connect to MongoDB
+async function connectToMongo() {
+  if (!MONGODB_URI) {
+    console.log('MONGODB_URI set edilmemiş. Local db.json modu aktif.');
+    return false;
+  }
+  try {
+    console.log('MongoDB Atlas\'a bağlanılıyor...');
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    mongoDb = mongoClient.db();
+    isMongoConnected = true;
+    console.log('MongoDB Atlas bağlantısı başarılı! 🟢');
+
+    // Run migration if MongoDB collections are empty and db.json exists
+    await migrateLocalDataToMongo();
+    return true;
+  } catch (error) {
+    console.error('MongoDB bağlantı hatası, local moda geçiliyor:', error);
+    isMongoConnected = false;
+    return false;
+  }
+}
+
+// Data Migration from db.json to MongoDB
+async function migrateLocalDataToMongo() {
+  try {
+    const contractsCount = await mongoDb.collection('contracts').countDocuments();
+    // If we have no contracts in Mongo, check if db.json has data and migrate it
+    if (contractsCount === 0 && fs.existsSync(DB_FILE)) {
+      console.log('Mevcut local db.json verileri MongoDB\'ye aktarılıyor...');
+      const localData = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+
+      if (localData.settings) {
+        await mongoDb.collection('settings').updateOne({}, { $set: localData.settings }, { upsert: true });
+      }
+      if (localData.categories) {
+        await mongoDb.collection('categories').updateOne({}, { $set: { list: localData.categories } }, { upsert: true });
+      }
+      if (localData.catalog && localData.catalog.length > 0) {
+        await mongoDb.collection('catalog').deleteMany({});
+        await mongoDb.collection('catalog').insertMany(localData.catalog);
+      }
+      if (localData.parquetCatalog && localData.parquetCatalog.length > 0) {
+        await mongoDb.collection('parquetCatalog').deleteMany({});
+        await mongoDb.collection('parquetCatalog').insertMany(localData.parquetCatalog);
+      }
+      if (localData.contracts && localData.contracts.length > 0) {
+        await mongoDb.collection('contracts').insertMany(localData.contracts);
+      }
+      console.log('Veri transferi başarıyla tamamlandı! 🚀');
+    }
+  } catch (err) {
+    console.error('Veri transferi hatası:', err);
+  }
+}
+
+// Local Database Handlers (Fallback)
+const readLocalDb = () => {
   try {
     if (!fs.existsSync(DB_FILE)) {
       const initDb = {
@@ -108,13 +173,37 @@ const readDb = () => {
   }
 };
 
-const writeDb = (data) => {
+const writeLocalDb = (data) => {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
     console.error('Database write error:', err);
   }
 };
+
+// Unified Database CRUD Helper
+async function getDbSnapshot() {
+  if (isMongoConnected) {
+    try {
+      const settingsDoc = await mongoDb.collection('settings').findOne({});
+      const categoriesDoc = await mongoDb.collection('categories').findOne({});
+      const catalog = await mongoDb.collection('catalog').find({}).toArray();
+      const parquetCatalog = await mongoDb.collection('parquetCatalog').find({}).toArray();
+      const contracts = await mongoDb.collection('contracts').find({}).toArray();
+
+      return {
+        settings: settingsDoc || DEFAULT_SETTINGS,
+        categories: categoriesDoc ? categoriesDoc.list : ['Sözleşme Kalemleri'],
+        catalog: catalog.length > 0 ? catalog : DEFAULT_CATALOG,
+        parquetCatalog: parquetCatalog.length > 0 ? parquetCatalog : DEFAULT_PARQUET_CATALOG.map((p, i) => ({ ...p, id: (i + 1).toString() })),
+        contracts: contracts || []
+      };
+    } catch (err) {
+      console.error('Error fetching MongoDB snapshot, falling back to local file read:', err);
+    }
+  }
+  return readLocalDb();
+}
 
 // Authentication Middleware
 const requireAuth = (req, res, next) => {
@@ -154,16 +243,40 @@ app.post('/api/logout', (req, res) => {
 });
 
 // API Endpoints
-app.get('/api/db', requireAuth, (req, res) => {
-  res.json(readDb());
+app.get('/api/db', requireAuth, async (req, res) => {
+  const db = await getDbSnapshot();
+  res.json(db);
 });
 
-app.post('/api/contracts', requireAuth, (req, res) => {
-  const db = readDb();
+app.post('/api/contracts', requireAuth, async (req, res) => {
   const contract = req.body;
   if (!contract.id) {
     contract.id = Date.now().toString();
   }
+
+  if (isMongoConnected) {
+    try {
+      if (!contract.contractNumber) {
+        const contracts = await mongoDb.collection('contracts').find({}).toArray();
+        const lastNumber = contracts.length > 0
+          ? Math.max(...contracts.map(c => Number(c.contractNumber) || 1000))
+          : 1000;
+        contract.contractNumber = (lastNumber + 1).toString();
+      }
+
+      await mongoDb.collection('contracts').updateOne(
+        { id: contract.id },
+        { $set: contract },
+        { upsert: true }
+      );
+      return res.json({ success: true, contract });
+    } catch (err) {
+      console.error('MongoDB contract update error, falling back to local file write:', err);
+    }
+  }
+
+  // File fallback
+  const db = readLocalDb();
   const existingIdx = db.contracts.findIndex(c => c.id === contract.id);
   if (existingIdx > -1) {
     db.contracts[existingIdx] = contract;
@@ -176,42 +289,98 @@ app.post('/api/contracts', requireAuth, (req, res) => {
     }
     db.contracts.push(contract);
   }
-  writeDb(db);
+  writeLocalDb(db);
   res.json({ success: true, contract });
 });
 
-app.delete('/api/contracts/:id', requireAuth, (req, res) => {
-  const db = readDb();
-  db.contracts = db.contracts.filter(c => c.id !== req.params.id);
-  writeDb(db);
+app.delete('/api/contracts/:id', requireAuth, async (req, res) => {
+  const id = req.params.id;
+  if (isMongoConnected) {
+    try {
+      await mongoDb.collection('contracts').deleteOne({ id: id });
+      return res.json({ success: true });
+    } catch (err) {
+      console.error('MongoDB contract delete error, falling back to local file:', err);
+    }
+  }
+
+  const db = readLocalDb();
+  db.contracts = db.contracts.filter(c => c.id !== id);
+  writeLocalDb(db);
   res.json({ success: true });
 });
 
-app.post('/api/settings', requireAuth, (req, res) => {
-  const db = readDb();
-  db.settings = req.body;
-  writeDb(db);
+app.post('/api/settings', requireAuth, async (req, res) => {
+  const settings = req.body;
+  if (isMongoConnected) {
+    try {
+      await mongoDb.collection('settings').updateOne({}, { $set: settings }, { upsert: true });
+      return res.json({ success: true });
+    } catch (err) {
+      console.error('MongoDB settings update error, falling back to local file:', err);
+    }
+  }
+
+  const db = readLocalDb();
+  db.settings = settings;
+  writeLocalDb(db);
   res.json({ success: true });
 });
 
-app.post('/api/catalog', requireAuth, (req, res) => {
-  const db = readDb();
-  db.catalog = req.body;
-  writeDb(db);
+app.post('/api/catalog', requireAuth, async (req, res) => {
+  const catalog = req.body;
+  if (isMongoConnected) {
+    try {
+      await mongoDb.collection('catalog').deleteMany({});
+      if (catalog.length > 0) {
+        await mongoDb.collection('catalog').insertMany(catalog);
+      }
+      return res.json({ success: true });
+    } catch (err) {
+      console.error('MongoDB catalog update error, falling back to local file:', err);
+    }
+  }
+
+  const db = readLocalDb();
+  db.catalog = catalog;
+  writeLocalDb(db);
   res.json({ success: true });
 });
 
-app.post('/api/parquet', requireAuth, (req, res) => {
-  const db = readDb();
-  db.parquetCatalog = req.body;
-  writeDb(db);
+app.post('/api/parquet', requireAuth, async (req, res) => {
+  const parquetCatalog = req.body;
+  if (isMongoConnected) {
+    try {
+      await mongoDb.collection('parquetCatalog').deleteMany({});
+      if (parquetCatalog.length > 0) {
+        await mongoDb.collection('parquetCatalog').insertMany(parquetCatalog);
+      }
+      return res.json({ success: true });
+    } catch (err) {
+      console.error('MongoDB parquet update error, falling back to local file:', err);
+    }
+  }
+
+  const db = readLocalDb();
+  db.parquetCatalog = parquetCatalog;
+  writeLocalDb(db);
   res.json({ success: true });
 });
 
-app.post('/api/categories', requireAuth, (req, res) => {
-  const db = readDb();
-  db.categories = req.body;
-  writeDb(db);
+app.post('/api/categories', requireAuth, async (req, res) => {
+  const categories = req.body;
+  if (isMongoConnected) {
+    try {
+      await mongoDb.collection('categories').updateOne({}, { $set: { list: categories } }, { upsert: true });
+      return res.json({ success: true });
+    } catch (err) {
+      console.error('MongoDB categories update error, falling back to local file:', err);
+    }
+  }
+
+  const db = readLocalDb();
+  db.categories = categories;
+  writeLocalDb(db);
   res.json({ success: true });
 });
 
@@ -223,7 +392,15 @@ app.get('/{*path}', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Egefleks Yer Kaplamaları sunucusu yerel ağda başlatıldı: http://localhost:${PORT}`);
-  console.log(`Diğer bilgisayarlar yerel IP adresinizi kullanarak bağlanabilir (örn: http://192.168.1.XX:${PORT})`);
+// Initialize database connection then start server
+connectToMongo().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Egefleks Yer Kaplamaları sunucusu başlatıldı. Port: ${PORT}`);
+    if (isMongoConnected) {
+      console.log('Veriler bulutta MongoDB Atlas üzerinde saklanıyor.');
+    } else {
+      console.log(`Veriler yerelde saklanıyor (${DB_FILE}).`);
+    }
+  });
 });
+
