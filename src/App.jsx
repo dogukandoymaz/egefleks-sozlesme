@@ -81,6 +81,38 @@ function App() {
         categories: 'egefleks_categories',
       };
 
+      // Safety check & upload for contracts first
+      const localContractsStr = localStorage.getItem(localKeys.contracts) || '[]';
+      let localContracts = [];
+      try { localContracts = JSON.parse(localContractsStr); } catch (e) { localContracts = []; }
+
+      const serverContracts = serverDb.contracts || [];
+      const serverContractIds = new Set(serverContracts.map(c => c.id));
+      
+      // Find local contracts not on server
+      const unsyncedContracts = localContracts.filter(c => c.id && !serverContractIds.has(c.id));
+      
+      if (unsyncedContracts.length > 0) {
+        console.log(`Farklı/yeni yerel sözleşmeler bulundu (${unsyncedContracts.length} adet). Sunucuya eşitleniyor...`);
+        // Upload unsynced contracts to server
+        for (const contract of unsyncedContracts) {
+          try {
+            await fetch('/api/contracts', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify(contract)
+            });
+          } catch (e) {
+            console.error('Failed to sync contract to server:', e);
+          }
+        }
+        // Force re-fetch on next interval to get clean database state
+        return;
+      }
+
       Object.entries(localKeys).forEach(([dbKey, storageKey]) => {
         const localStr = localStorage.getItem(storageKey) || '';
         const serverStr = JSON.stringify(serverDb[dbKey]);
