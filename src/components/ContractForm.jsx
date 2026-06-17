@@ -136,6 +136,12 @@ export default function ContractForm({ contract, prefillData, onBack }) {
   const [catalog, setCatalog] = useState(() => Storage.getCatalog());
 
   // Form Fields
+  const [contractNumber, setContractNumber] = useState(() => {
+    if (contract) return contract.contractNumber || '';
+    const contracts = Storage.getContracts();
+    const maxNo = contracts.reduce((max, c) => Number(c.contractNumber) > max ? Number(c.contractNumber) : max, 1007);
+    return (maxNo + 1).toString();
+  });
   const [customerName, setCustomerName] = useState('');
   const [billingAddress, setBillingAddress] = useState('');
   const [installationAddress, setInstallationAddress] = useState('');
@@ -160,8 +166,7 @@ export default function ContractForm({ contract, prefillData, onBack }) {
   const [description, setDescription] = useState('');
 
   // Payment fields
-  const [cashPayment, setCashPayment] = useState(0);
-  const [cardPayment, setCardPayment] = useState(0);
+  const [payments, setPayments] = useState([]);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [status, setStatus] = useState('hazirlaniyor');
 
@@ -169,8 +174,32 @@ export default function ContractForm({ contract, prefillData, onBack }) {
   const [customerSignature, setCustomerSignature] = useState('');
   const [salesRepSignature, setSalesRepSignature] = useState('');
 
+  const handlePaymentChange = (index, field, value) => {
+    const newPayments = [...payments];
+    newPayments[index][field] = value;
+    setPayments(newPayments);
+  };
+
+  const addPaymentRow = () => {
+    setPayments([
+      ...payments,
+      {
+        id: Date.now().toString() + Math.random().toString().substring(2, 7),
+        amount: 0,
+        method: 'Nakit',
+        date: new Date().toISOString().substring(0, 10),
+        description: ''
+      }
+    ]);
+  };
+
+  const removePaymentRow = (index) => {
+    setPayments(payments.filter((_, idx) => idx !== index));
+  };
+
   useEffect(() => {
     if (contract) {
+      if (contract.contractNumber) setContractNumber(contract.contractNumber.toString());
       setCustomerName(contract.customerName || '');
       setBillingAddress(contract.billingAddress || '');
       setInstallationAddress(contract.installationAddress || '');
@@ -201,8 +230,31 @@ export default function ContractForm({ contract, prefillData, onBack }) {
       setDescription(contract.description || '');
       setDiscountType(contract.discountType || 'percentage');
       setDiscountValue(contract.discountValue || 0);
-      setCashPayment(contract.cashPayment || 0);
-      setCardPayment(contract.cardPayment || 0);
+      
+      // Handle payments migration
+      let loadedPayments = contract.payments || [];
+      if (loadedPayments.length === 0) {
+        if (contract.cashPayment && contract.cashPayment > 0) {
+          loadedPayments.push({
+            id: 'legacy_cash_' + Date.now(),
+            amount: contract.cashPayment,
+            method: 'Nakit',
+            date: contract.date ? contract.date.substring(0, 10) : new Date().toISOString().substring(0, 10),
+            description: 'Nakit Tahsilat (Eski Kayıt)'
+          });
+        }
+        if (contract.cardPayment && contract.cardPayment > 0) {
+          loadedPayments.push({
+            id: 'legacy_card_' + Date.now(),
+            amount: contract.cardPayment,
+            method: 'Kredi Kartı',
+            date: contract.date ? contract.date.substring(0, 10) : new Date().toISOString().substring(0, 10),
+            description: 'Kart Tahsilat (Eski Kayıt)'
+          });
+        }
+      }
+      setPayments(loadedPayments);
+      
       if (contract.deliveryDate) setDeliveryDate(contract.deliveryDate.substring(0, 10));
       setStatus(contract.status || 'hazirlaniyor');
       setCustomerSignature(contract.customerSignature || '');
@@ -234,7 +286,8 @@ export default function ContractForm({ contract, prefillData, onBack }) {
     : (Number(discountValue) || 0);
 
   const total = Math.max(0, subtotalIncl - discountAmount);
-  const remaining = Math.max(0, total - (Number(cashPayment) + Number(cardPayment)));
+  const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const remaining = Math.max(0, total - totalPaid);
 
   const handleItemChange = (index, field, value) => {
     const newItems = [...items];
@@ -260,6 +313,20 @@ export default function ContractForm({ contract, prefillData, onBack }) {
       item.priceIncl = Number(value || 0) * (1 + kdvRate / 100);
     } else if (field === 'priceIncl') {
       item.priceExcl = Number(value || 0) / (1 + kdvRate / 100);
+    } else if (field === 'total') {
+      const qty = Number(item.qty || 0);
+      const totalVal = Number(value || 0);
+      item.total = totalVal;
+      if (qty > 0) {
+        item.priceIncl = totalVal / qty;
+      } else {
+        item.priceIncl = totalVal;
+      }
+      item.priceExcl = item.priceIncl / (1 + kdvRate / 100);
+      item.totalExcl = qty > 0 ? (item.priceExcl * qty) : item.priceExcl;
+      item.kdvAmount = item.total - item.totalExcl;
+      setItems(newItems);
+      return;
     }
 
     // Always update total based on qty and price
@@ -310,7 +377,6 @@ export default function ContractForm({ contract, prefillData, onBack }) {
     setCatalog(updatedCatalog);
     alert(`"${item.name.trim()}" başarıyla kataloğa kaydedildi!`);
   };
-
   const handleSubmit = (e) => {
     e.preventDefault();
 
@@ -318,10 +384,16 @@ export default function ContractForm({ contract, prefillData, onBack }) {
       alert('Lütfen müşteri adını girin.');
       return;
     }
+    const calculatedCashPayment = payments
+      .filter(p => p.method === 'Nakit')
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const calculatedCardPayment = payments
+      .filter(p => p.method !== 'Nakit')
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
     Storage.saveContract({
       id: contract?.id,
-      contractNumber: contract?.contractNumber,
+      contractNumber: contractNumber,
       customerName,
       billingAddress,
       installationAddress,
@@ -342,8 +414,9 @@ export default function ContractForm({ contract, prefillData, onBack }) {
       subtotalExcl,
       totalKdv,
       total,
-      cashPayment: Number(cashPayment),
-      cardPayment: Number(cardPayment),
+      payments: payments.filter(p => Number(p.amount) > 0 || p.description.trim() !== ''),
+      cashPayment: calculatedCashPayment,
+      cardPayment: calculatedCardPayment,
       remaining,
       deliveryDate,
       status,
@@ -359,7 +432,7 @@ export default function ContractForm({ contract, prefillData, onBack }) {
       colors: ['#059669', '#d97706', '#10b981']
     });
 
-    onBack();
+    onBack(true);
   };
 
   const formatCurrency = (val) => {
@@ -420,6 +493,27 @@ export default function ContractForm({ contract, prefillData, onBack }) {
                   />
                 </div>
 
+                <div className="form-group">
+                  <label>Sözleşme Tarihi</label>
+                  <input 
+                    type="date" 
+                    className="form-input" 
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Sözleşme Numarası</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Sözleşme No"
+                    value={contractNumber}
+                    onChange={(e) => setContractNumber(e.target.value)}
+                  />
+                </div>
+
                 {showAdditionalDetails && (
                   <>
                     <div className="form-group">
@@ -442,16 +536,6 @@ export default function ContractForm({ contract, prefillData, onBack }) {
                         placeholder="T.C. Kimlik No"
                         value={tcNo}
                         onChange={(e) => setTcNo(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label>Sözleşme Tarihi</label>
-                      <input 
-                        type="date" 
-                        className="form-input" 
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
                       />
                     </div>
 
@@ -515,11 +599,11 @@ export default function ContractForm({ contract, prefillData, onBack }) {
                   <thead>
                     <tr>
                       <th style={{ width: '32%' }}>Malzeme Tanımı</th>
+                      <th style={{ width: '10%' }}>Miktar</th>
                       <th style={{ width: '8%' }}>Birim</th>
                       <th style={{ width: '10%' }}>KDV Oranı</th>
                       <th style={{ width: '14%' }}>Birim Fiyat (Hariç)</th>
                       <th style={{ width: '14%' }}>Birim Fiyat (Dahil)</th>
-                      <th style={{ width: '10%' }}>Miktar</th>
                       <th style={{ width: '12%', textAlign: 'right' }}>Tutar (Dahil)</th>
                       <th style={{ width: '40px' }}></th>
                     </tr>
@@ -535,6 +619,17 @@ export default function ContractForm({ contract, prefillData, onBack }) {
                             placeholder="Malzeme adını yazın veya seçin..."
                             value={item.name}
                             onChange={(e) => handleItemChange(index, 'name', e.target.value)}
+                            style={{ fontSize: '16px', padding: '12px 14px', height: '46px', fontWeight: '600' }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="any"
+                            className="form-input"
+                            placeholder="0"
+                            value={item.qty || ''}
+                            onChange={(e) => handleItemChange(index, 'qty', Number(e.target.value))}
                             style={{ fontSize: '16px', padding: '12px 14px', height: '46px', fontWeight: '600' }}
                           />
                         </td>
@@ -591,13 +686,10 @@ export default function ContractForm({ contract, prefillData, onBack }) {
                             step="any"
                             className="form-input"
                             placeholder="0"
-                            value={item.qty || ''}
-                            onChange={(e) => handleItemChange(index, 'qty', Number(e.target.value))}
-                            style={{ fontSize: '16px', padding: '12px 14px', height: '46px', fontWeight: '600' }}
+                            value={item.total || ''}
+                            onChange={(e) => handleItemChange(index, 'total', Number(e.target.value))}
+                            style={{ fontSize: '16px', padding: '12px 14px', height: '46px', fontWeight: '700', textAlign: 'right' }}
                           />
-                        </td>
-                        <td style={{ fontWeight: '700', fontSize: '16px', textAlign: 'right', color: 'var(--text-main)' }}>
-                          {formatCurrency(item.total || 0)}
                         </td>
                         <td style={{ textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
@@ -744,26 +836,96 @@ export default function ContractForm({ contract, prefillData, onBack }) {
               </div>
 
               <div className="form-grid">
-                <div className="form-group">
-                  <label>Nakit Tahsilat (TL)</label>
-                  <input 
-                    type="number" 
-                    className="form-input" 
-                    placeholder="0"
-                    value={cashPayment || ''}
-                    onChange={(e) => setCashPayment(Number(e.target.value))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Kart / Vade Tahsilat (TL)</label>
-                  <input 
-                    type="number" 
-                    className="form-input" 
-                    placeholder="0"
-                    value={cardPayment || ''}
-                    onChange={(e) => setCardPayment(Number(e.target.value))}
-                  />
+                {/* Dynamic Payments Section */}
+                <div className="form-group full-width" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                  <label style={{ fontWeight: '700' }}>Ödeme Tahsilat Detayları</label>
+                  <div className="items-table-wrapper" style={{ border: '1px solid var(--border)', borderRadius: '6px', overflow: 'hidden' }}>
+                    <table className="items-table" style={{ margin: 0, width: '100%' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '20%' }}>Tarih</th>
+                          <th style={{ width: '25%' }}>Ödeme Kanalı</th>
+                          <th style={{ width: '20%' }}>Tutar (TL)</th>
+                          <th style={{ width: '30%' }}>Açıklama</th>
+                          <th style={{ width: '40px' }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payments.map((p, index) => (
+                          <tr key={p.id || index}>
+                            <td>
+                              <input
+                                type="date"
+                                className="form-input"
+                                value={p.date || ''}
+                                onChange={(e) => handlePaymentChange(index, 'date', e.target.value)}
+                                style={{ height: '38px', padding: '6px 10px', fontSize: '14px' }}
+                              />
+                            </td>
+                            <td>
+                              <select
+                                className="form-select"
+                                value={p.method || 'Nakit'}
+                                onChange={(e) => handlePaymentChange(index, 'method', e.target.value)}
+                                style={{ height: '38px', padding: '6px 10px', fontSize: '14px', fontWeight: '600' }}
+                              >
+                                <option value="Nakit">Elden (Nakit)</option>
+                                <option value="Akbank Havale">Akbank Havale/EFT</option>
+                                <option value="VakıfBank Havale">VakıfBank Havale/EFT</option>
+                                <option value="Kredi Kartı">Kredi Kartı</option>
+                                <option value="Diğer Banka">Diğer Banka Havale/EFT</option>
+                              </select>
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                className="form-input"
+                                placeholder="0"
+                                value={p.amount || ''}
+                                onChange={(e) => handlePaymentChange(index, 'amount', Number(e.target.value))}
+                                style={{ height: '38px', padding: '6px 10px', fontSize: '14px', fontWeight: '700' }}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                className="form-input"
+                                placeholder="Açıklama (Örn: İş başı peşinatı)..."
+                                value={p.description || ''}
+                                onChange={(e) => handlePaymentChange(index, 'description', e.target.value)}
+                                style={{ height: '38px', padding: '6px 10px', fontSize: '14px' }}
+                              />
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                className="table-action-btn"
+                                style={{ padding: '6px' }}
+                                onClick={() => removePaymentRow(index)}
+                              >
+                                <Trash size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {payments.length === 0 && (
+                          <tr>
+                            <td colSpan="5" style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)' }}>
+                              Kayıtlı ödeme bulunmuyor. Eklemek için aşağıdaki butona tıklayın.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={addPaymentRow}
+                    style={{ alignSelf: 'flex-start', padding: '6px 12px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}
+                  >
+                    <Plus size={14} /> Yeni Ödeme Satırı Ekle
+                  </button>
                 </div>
 
                 <div className="form-group">

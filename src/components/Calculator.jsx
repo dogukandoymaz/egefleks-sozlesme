@@ -63,14 +63,16 @@ export default function Calculator({ onPrefillContract }) {
 
   const handleTransfer = (product, calc, transferType = 'detailed') => {
     const items = [];
+    const packagesCount = product.packageM2 > 0 ? Math.ceil(Number(jobM2) / product.packageM2) : 0;
+    const soldM2 = Number((packagesCount * product.packageM2).toFixed(4));
     
     if (transferType === 'package') {
-      const packageUnitPrice = Number(jobM2) > 0 ? (calc.grandTotal / Number(jobM2)) : 0;
+      const packageUnitPrice = soldM2 > 0 ? (calc.grandTotal / soldM2) : 0;
       items.push({
         id: 'parquet_package',
-        name: `${product.brand} ${product.series} ${product.mm}mm ${product.class} ${product.beveled}`.trim(),
+        name: `${product.brand} ${product.series} ${product.mm}mm ${product.class} ${product.beveled} (${packagesCount} Paket)`.trim(),
         unit: 'm²',
-        qty: Number(jobM2),
+        qty: soldM2,
         priceExcl: packageUnitPrice,
         priceIncl: packageUnitPrice,
         total: calc.grandTotal,
@@ -80,13 +82,14 @@ export default function Calculator({ onPrefillContract }) {
       });
     } else {
       // 1. Parquet Row
+      const m2Price = product.packagePrice > 0 ? (product.packagePrice / product.packageM2) : 0;
       items.push({
         id: 'parquet',
-        name: `${product.brand} ${product.series} ${product.mm}mm ${product.class} ${product.beveled}`.trim(),
+        name: `${product.brand} ${product.series} ${product.mm}mm ${product.class} ${product.beveled} (${packagesCount} Paket)`.trim(),
         unit: 'm²',
-        qty: Number(jobM2),
-        priceExcl: calc.materialPriceIncl,
-        priceIncl: calc.materialPriceIncl,
+        qty: soldM2,
+        priceExcl: m2Price,
+        priceIncl: m2Price,
         total: calc.materialTotal,
         totalExcl: calc.materialTotal,
         kdv: 0,
@@ -371,14 +374,11 @@ export default function Calculator({ onPrefillContract }) {
                 // Calculations per product row
                 const m2Price = p.packagePrice > 0 ? (p.packagePrice / p.packageM2) : 0;
                 
-                // Kaç paket (decimal exact like excel or rounded? Let's use exact m2/packageM2 but editable or round up for exact material pricing)
-                // In Excel: Fix (K) was 16m2 -> 6 packages. Prime was 20m2 -> 10.75 packages.
-                // Let's mimic Excel. If they input m2, packages = jobM2 / packageM2.
-                const rawPackages = p.packageM2 > 0 ? (jobM2 / p.packageM2) : 0;
-                const packagesCount = rawPackages; // exact decimal to replicate excel values
+                // Kaç paket (Yukarı yuvarlayarak tam paket hesabı yapıyoruz)
+                const packagesCount = p.packageM2 > 0 ? Math.ceil(jobM2 / p.packageM2) : 0;
+                const soldM2 = Number((packagesCount * p.packageM2).toFixed(4));
                 
-                // Malzeme tutarı
-                // If packagePrice is 0 (like Çamsan Exclusive), then 0
+                // Malzeme tutarı (Tam paket sayısı üzerinden hesaplanır)
                 const materialTotal = p.packagePrice > 0 ? (packagesCount * p.packagePrice) : 0;
                 
                 // Labor total calculation based on m2 vs fixed choice
@@ -398,7 +398,7 @@ export default function Calculator({ onPrefillContract }) {
 
                 // For transferring to contract, keep a ref of KDV exclusions
                 const materialTotalExcl = materialTotal; 
-                const materialPriceIncl = jobM2 > 0 ? (materialTotal / jobM2) : 0;
+                const materialPriceIncl = soldM2 > 0 ? (materialTotal / soldM2) : 0;
                 const materialPriceExcl = materialPriceIncl;
 
                 const rowCalc = {
@@ -424,7 +424,10 @@ export default function Calculator({ onPrefillContract }) {
                     <td style={{ fontWeight: '600' }}>{p.packageM2} m²</td>
                     <td style={{ fontWeight: '600' }}>{p.packagePrice > 0 ? formatCurrency(p.packagePrice) : 'Fiyat Yok'}</td>
                     <td style={{ color: 'var(--text-muted)' }}>{p.packagePrice > 0 ? formatCurrency(m2Price) : '-'}</td>
-                    <td style={{ fontWeight: '600' }}>{packagesCount.toFixed(4)}</td>
+                    <td style={{ fontWeight: '600' }}>
+                      <div style={{ fontWeight: '700', color: 'var(--text-main)' }}>{packagesCount} Paket</div>
+                      <div style={{ fontSize: '11.5px', color: 'var(--primary)', fontWeight: '700' }}>({soldM2.toFixed(2)} m²)</div>
+                    </td>
                     <td style={{ fontWeight: '700' }}>{p.packagePrice > 0 ? formatCurrency(materialTotal) : '-'}</td>
                     <td>{formatCurrency(laborTotal)}</td>
                     <td style={{ fontWeight: '800', color: 'var(--primary)' }}>{p.packagePrice > 0 ? formatCurrency(grandTotal) : '-'}</td>

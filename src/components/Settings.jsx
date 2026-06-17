@@ -7,7 +7,10 @@ import {
   Plus, 
   Trash2, 
   ArrowLeft, 
-  CheckCircle2
+  CheckCircle2,
+  Database,
+  Download,
+  Upload
 } from 'lucide-react';
 
 export default function Settings({ onBack }) {
@@ -41,6 +44,66 @@ export default function Settings({ onBack }) {
   const handleRemoveTerm = (index) => {
     const updatedTerms = settings.terms.filter((_, idx) => idx !== index);
     setSettings({ ...settings, terms: updatedTerms });
+  };
+
+  const handleDownloadBackup = () => {
+    try {
+      const data = Storage.getFullBackup();
+      const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
+        JSON.stringify(data, null, 2)
+      )}`;
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', jsonString);
+      
+      const dateStr = new Date().toISOString().split('T')[0];
+      downloadAnchor.setAttribute('download', `egefleks_sozlesme_yedek_${dateStr}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      triggerSuccessAlert('Veritabanı yedeği başarıyla indirildi!');
+    } catch (err) {
+      console.error('Yedek alma hatası:', err);
+      alert('Yedek alınırken bir hata oluştu.');
+    }
+  };
+
+  const handleRestoreBackup = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!window.confirm('Dikkat! Bu yedeği yüklemek mevcut tüm sözleşmelerinizi ve ayarlarınızı silip yerine yedekteki verileri yazacaktır. Devam etmek istiyor musunuz?')) {
+      e.target.value = ''; // Reset input
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const backupData = JSON.parse(event.target.result);
+        
+        // Basic validation
+        if (!backupData.settings || !backupData.catalog || !backupData.contracts) {
+          alert('Geçersiz yedek dosyası! Lütfen doğru formatta bir Egefleks yedek dosyası seçin.');
+          e.target.value = '';
+          return;
+        }
+
+        const success = await Storage.restoreBackup(backupData);
+        if (success) {
+          triggerSuccessAlert('Veritabanı başarıyla geri yüklendi! Sayfa yenileniyor...');
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } else {
+          alert('Yedek geri yüklenirken veritabanı hatası oluştu.');
+        }
+      } catch (err) {
+        console.error('Yedek yükleme hatası:', err);
+        alert('Yedek dosyası okunurken hata oluştu. Dosyanın geçerli bir JSON olduğundan emin olun.');
+      }
+      e.target.value = ''; // Reset input
+    };
+    reader.readAsText(file);
   };
 
   return (
@@ -218,6 +281,47 @@ export default function Settings({ onBack }) {
             >
               <Save size={16} /> Maddeleri Kaydet
             </button>
+          </div>
+        </div>
+
+        {/* FULL WIDTH COLUMN: BACKUP & RESTORE */}
+        <div className="card" style={{ gridColumn: '1 / -1', marginTop: '24px' }}>
+          <div className="form-section-title">
+            <Database size={18} />
+            Veritabanı Yedekleme & Kurtarma (Yedek Al/Yükle)
+          </div>
+          
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+            Tüm sözleşmelerinizi, ürünlerinizi ve sistem ayarlarınızı tek bir dosya halinde bilgisayarınıza indirebilir, 
+            dilediğiniz zaman bu dosyayı yükleyerek sisteminizi eski bir tarihe geri döndürebilirsiniz.
+          </p>
+
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+            <button 
+              type="button" 
+              className="btn btn-secondary" 
+              onClick={handleDownloadBackup}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Download size={16} /> Veritabanı Yedeğini Bilgisayara İndir (.json)
+            </button>
+
+            <div style={{ position: 'relative' }}>
+              <input 
+                type="file" 
+                id="backup-upload" 
+                accept=".json" 
+                onChange={handleRestoreBackup}
+                style={{ display: 'none' }} 
+              />
+              <label 
+                htmlFor="backup-upload" 
+                className="btn btn-secondary" 
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+              >
+                <Upload size={16} /> Bilgisayardan Yedek Yükle (.json)
+              </label>
+            </div>
           </div>
         </div>
 

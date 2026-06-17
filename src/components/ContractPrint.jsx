@@ -137,8 +137,8 @@ export default function ContractPrint({ contractId, onBack }) {
           <thead>
             <tr style={{ borderBottom: '2px solid #000000', borderTop: '2px solid #000000' }}>
               <th style={{ textAlign: 'left', padding: '8px', fontWeight: '700' }}>Malzeme / Uygulama Adı</th>
-              <th style={{ textAlign: 'center', padding: '8px', fontWeight: '700', width: '60px' }}>Birim</th>
               <th style={{ textAlign: 'center', padding: '8px', fontWeight: '700', width: '70px' }}>Miktar</th>
+              <th style={{ textAlign: 'center', padding: '8px', fontWeight: '700', width: '60px' }}>Birim</th>
               {hasKdv && <th style={{ textAlign: 'center', padding: '8px', fontWeight: '700', width: '60px' }}>KDV</th>}
               <th style={{ textAlign: 'right', padding: '8px', fontWeight: '700', width: '100px' }}>{hasKdv ? 'Birim Fiyat (Hariç)' : 'Birim Fiyat'}</th>
               <th style={{ textAlign: 'right', padding: '8px', fontWeight: '700', width: '110px' }}>{hasKdv ? 'Tutar (Dahil)' : 'Tutar'}</th>
@@ -152,8 +152,8 @@ export default function ContractPrint({ contractId, onBack }) {
               return (
                 <tr key={index} style={{ borderBottom: '1px solid #e5e7eb' }}>
                   <td style={{ padding: '8px' }}>{item.name}</td>
-                  <td style={{ padding: '8px', textAlign: 'center' }}>{item.unit}</td>
                   <td style={{ padding: '8px', textAlign: 'center' }}>{item.qty}</td>
+                  <td style={{ padding: '8px', textAlign: 'center' }}>{item.unit}</td>
                   {hasKdv && <td style={{ padding: '8px', textAlign: 'center' }}>{kdvText}</td>}
                   <td style={{ padding: '8px', textAlign: 'right' }}>{formatCurrency(priceVal)}</td>
                   <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600' }}>{formatCurrency(item.total)}</td>
@@ -190,17 +190,32 @@ export default function ContractPrint({ contractId, onBack }) {
               <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: '700', fontSize: '12px', borderBottom: '2px solid #000000' }}>{formatCurrency(contract.total)}</td>
             </tr>
             {/* Payments detail */}
-            <tr>
-              <td colSpan={hasKdv ? 4 : 3} style={{ border: 'none' }}></td>
-              <td style={{ padding: '4px 8px', textAlign: 'right', color: '#4b5563' }}>Nakit Ödeme:</td>
-              <td style={{ padding: '4px 8px', textAlign: 'right', color: '#4b5563' }}>{formatCurrency(contract.cashPayment)}</td>
-            </tr>
-            {contract.cardPayment > 0 && (
-              <tr>
-                <td colSpan={hasKdv ? 4 : 3} style={{ border: 'none' }}></td>
-                <td style={{ padding: '4px 8px', textAlign: 'right', color: '#4b5563' }}>Kart / Vade:</td>
-                <td style={{ padding: '4px 8px', textAlign: 'right', color: '#4b5563' }}>{formatCurrency(contract.cardPayment)}</td>
-              </tr>
+            {contract.payments && contract.payments.length > 0 ? (
+              contract.payments.map((p, idx) => (
+                <tr key={p.id || idx}>
+                  <td colSpan={hasKdv ? 4 : 3} style={{ border: 'none', padding: '2px 8px', fontSize: '9.5px', color: '#4b5563', textAlign: 'right' }}>
+                    {formatDate(p.date)} - {p.method} {p.description ? `(${p.description})` : ''}:
+                  </td>
+                  <td style={{ padding: '2px 8px', border: 'none', fontSize: '9.5px', color: '#4b5563', textAlign: 'right' }}>
+                    {formatCurrency(p.amount)}
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <>
+                {contract.cashPayment > 0 && (
+                  <tr>
+                    <td colSpan={hasKdv ? 4 : 3} style={{ border: 'none', padding: '2px 8px', fontSize: '9.5px', color: '#4b5563', textAlign: 'right' }}>Nakit Ödeme:</td>
+                    <td style={{ padding: '2px 8px', border: 'none', fontSize: '9.5px', color: '#4b5563', textAlign: 'right' }}>{formatCurrency(contract.cashPayment)}</td>
+                  </tr>
+                )}
+                {contract.cardPayment > 0 && (
+                  <tr>
+                    <td colSpan={hasKdv ? 4 : 3} style={{ border: 'none', padding: '2px 8px', fontSize: '9.5px', color: '#4b5563', textAlign: 'right' }}>Kart / Vade:</td>
+                    <td style={{ padding: '2px 8px', border: 'none', fontSize: '9.5px', color: '#4b5563', textAlign: 'right' }}>{formatCurrency(contract.cardPayment)}</td>
+                  </tr>
+                )}
+              </>
             )}
             <tr style={{ fontWeight: '700' }}>
               <td colSpan={hasKdv ? 4 : 3} style={{ border: 'none' }}></td>

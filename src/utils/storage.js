@@ -281,5 +281,54 @@ export const Storage = {
     localStorage.setItem(KEYS.CATEGORIES, JSON.stringify(cats));
     apiPost('/api/categories', cats);
     return cats;
+  },
+
+  // Full Backup and Restore
+  getFullBackup() {
+    return {
+      settings: this.getSettings(),
+      catalog: this.getCatalog(),
+      parquetCatalog: this.getParquetCatalog(),
+      contracts: this.getContracts(),
+      categories: this.getCategories()
+    };
+  },
+
+  async restoreBackup(backupData) {
+    if (!backupData) return false;
+    
+    try {
+      // Save to local storage
+      if (backupData.settings) localStorage.setItem(KEYS.SETTINGS, JSON.stringify(backupData.settings));
+      if (backupData.catalog) localStorage.setItem(KEYS.CATALOG, JSON.stringify(backupData.catalog));
+      if (backupData.parquetCatalog) localStorage.setItem(KEYS.PARQUET_CATALOG, JSON.stringify(backupData.parquetCatalog));
+      if (backupData.contracts) localStorage.setItem(KEYS.CONTRACTS, JSON.stringify(backupData.contracts));
+      if (backupData.categories) localStorage.setItem(KEYS.CATEGORIES, JSON.stringify(backupData.categories));
+      
+      // Sync with server API
+      if (backupData.settings) apiPost('/api/settings', backupData.settings);
+      if (backupData.categories) apiPost('/api/categories', backupData.categories);
+      if (backupData.catalog) apiPost('/api/catalog', backupData.catalog);
+      if (backupData.parquetCatalog) apiPost('/api/parquet', backupData.parquetCatalog);
+      
+      // Upload contracts to server
+      if (backupData.contracts && backupData.contracts.length > 0) {
+        const token = localStorage.getItem('egefleks_auth_token');
+        for (const contract of backupData.contracts) {
+          await fetch('/api/contracts', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify(contract)
+          });
+        }
+      }
+      return true;
+    } catch (e) {
+      console.error('Backup restore failed:', e);
+      return false;
+    }
   }
 };

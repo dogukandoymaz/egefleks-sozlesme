@@ -37,6 +37,10 @@ function App() {
 
   // Logout handler
   const handleLogout = useCallback(async () => {
+    if (currentView === 'create-contract' || currentView === 'edit-contract') {
+      const confirmLeave = window.confirm('Kaydedilmemiş değişiklikleriniz var. Çıkış yapmak istediğinizden emin misiniz?');
+      if (!confirmLeave) return;
+    }
     const token = localStorage.getItem('egefleks_auth_token');
     try {
       await fetch('/api/logout', {
@@ -48,7 +52,7 @@ function App() {
     }
     localStorage.removeItem('egefleks_auth_token');
     setAuthToken(null);
-  }, []);
+  }, [currentView]);
 
   // Sync with central Node.js database
   const syncWithServer = useCallback(async () => {
@@ -151,19 +155,31 @@ function App() {
     document.documentElement.setAttribute('data-theme', newTheme);
   };
 
+  const changeView = useCallback((targetView, bypassConfirmation = false) => {
+    if (!bypassConfirmation && (currentView === 'create-contract' || currentView === 'edit-contract')) {
+      const confirmLeave = window.confirm(
+        'Kaydedilmemiş değişiklikleriniz var. Başka bir sayfaya geçmek istediğinizden emin misiniz? (Kaydedilmeyen veriler kaybolacaktır)'
+      );
+      if (!confirmLeave) return;
+    }
+    if (targetView !== 'create-contract') setPrefillData(null);
+    if (targetView !== 'edit-contract' && targetView !== 'print-contract') setSelectedContract(null);
+    setCurrentView(targetView);
+  }, [currentView]);
+
   const handleEditContract = (contract) => {
     setSelectedContract(contract);
-    setCurrentView('edit-contract');
+    changeView('edit-contract', true);
   };
 
   const handleViewPrint = (contractId) => {
     setSelectedContract(contractId);
-    setCurrentView('print-contract');
+    changeView('print-contract', true);
   };
 
   const handlePrefillContract = (data) => {
     setPrefillData(data);
-    setCurrentView('create-contract');
+    changeView('create-contract', true);
   };
 
   const renderView = () => {
@@ -172,8 +188,7 @@ function App() {
         return (
           <Dashboard 
             onCreateNew={() => {
-              setPrefillData(null);
-              setCurrentView('create-contract');
+              changeView('create-contract');
             }} 
             onEdit={handleEditContract}
             onViewPrint={handleViewPrint}
@@ -185,9 +200,8 @@ function App() {
           <ContractForm 
             contract={null} 
             prefillData={prefillData}
-            onBack={() => {
-              setPrefillData(null);
-              setCurrentView('dashboard');
+            onBack={(saved = false) => {
+              changeView('dashboard', saved);
             }} 
           />
         );
@@ -196,21 +210,21 @@ function App() {
           <ContractForm 
             contract={selectedContract} 
             prefillData={null}
-            onBack={() => setCurrentView('dashboard')} 
+            onBack={(saved = false) => changeView('dashboard', saved)} 
           />
         );
       case 'print-contract':
         return (
           <ContractPrint 
             contractId={selectedContract} 
-            onBack={() => setCurrentView('dashboard')} 
+            onBack={() => changeView('dashboard')} 
             key={syncVersion}
           />
         );
       case 'settings':
         return (
           <Settings 
-            onBack={() => setCurrentView('dashboard')} 
+            onBack={() => changeView('dashboard')} 
             key={syncVersion}
           />
         );
@@ -228,7 +242,7 @@ function App() {
           />
         );
       default:
-        return <Dashboard onCreateNew={() => setCurrentView('create-contract')} key={syncVersion} />;
+        return <Dashboard onCreateNew={() => changeView('create-contract')} key={syncVersion} />;
     }
   };
 
@@ -276,8 +290,7 @@ function App() {
           <li 
             className={`sidebar-item ${currentView === 'dashboard' ? 'active' : ''}`}
             onClick={() => {
-              setSelectedContract(null);
-              setCurrentView('dashboard');
+              changeView('dashboard');
             }}
           >
             <LayoutDashboard />
@@ -287,8 +300,7 @@ function App() {
           <li 
             className={`sidebar-item ${currentView === 'create-contract' ? 'active' : ''}`}
             onClick={() => {
-              setSelectedContract(null);
-              setCurrentView('create-contract');
+              changeView('create-contract');
             }}
           >
             <PlusCircle />
@@ -298,8 +310,7 @@ function App() {
           <li 
             className={`sidebar-item ${currentView === 'calculator' ? 'active' : ''}`}
             onClick={() => {
-              setSelectedContract(null);
-              setCurrentView('calculator');
+              changeView('calculator');
             }}
           >
             <CalculatorIcon />
@@ -309,8 +320,7 @@ function App() {
           <li 
             className={`sidebar-item ${currentView === 'products' ? 'active' : ''}`}
             onClick={() => {
-              setSelectedContract(null);
-              setCurrentView('products');
+              changeView('products');
             }}
           >
             <Package />
@@ -320,8 +330,7 @@ function App() {
           <li 
             className={`sidebar-item ${currentView === 'settings' ? 'active' : ''}`}
             onClick={() => {
-              setSelectedContract(null);
-              setCurrentView('settings');
+              changeView('settings');
             }}
           >
             <SettingsIcon />
